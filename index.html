@@ -241,13 +241,20 @@ tr:last-child td{border-bottom:none}
   </div>
   <div class="card">
     <div class="card-title">Egreso de caja</div>
-    <div class="egreso-grid">
+    <div class="egreso-grid" style="grid-template-columns:2fr 1fr 1fr 1fr auto">
       <div><label>Descripci&#243;n / Proveedor</label><input type="text" id="egreso-desc" placeholder="Ej: Babysec, alquiler..." /></div>
       <div><label>Monto ($)</label><input type="number" id="egreso-monto" placeholder="0" step="1" /></div>
       <div><label>Tipo</label><select id="egreso-tipo">
         <option value="proveedor">Proveedor</option>
         <option value="gastos">Gastos varios</option>
         <option value="retiro">Retiro de caja</option>
+      </select></div>
+      <div><label>Forma de pago</label><select id="egreso-pago">
+        <option value="Efectivo">Efectivo</option>
+        <option value="Transferencia">Transferencia</option>
+        <option value="Mercado Pago">Mercado Pago</option>
+        <option value="Tarjeta debito">Tarjeta d&#233;bito</option>
+        <option value="Tarjeta credito">Tarjeta cr&#233;dito</option>
       </select></div>
       <button class="btn btn-outline" id="btn-egreso">+ Agregar</button>
     </div>
@@ -310,7 +317,20 @@ tr:last-child td{border-bottom:none}
     <div id="entrada-info" style="margin-top:8px"></div>
   </div>
   <div class="card">
-    <div class="card-title">Inventario actual</div>
+    <div class="card-title">Ajuste manual de stock</div>
+    <div class="entrada-grid">
+      <div style="position:relative">
+        <label>Producto</label>
+        <input id="ajuste-search" type="text" placeholder="Buscar producto..." autocomplete="off" />
+        <div class="suggestions" id="sugg-ajuste"></div>
+      </div>
+      <div><label>Cantidad nueva</label><input type="number" id="ajuste-qty" placeholder="0" min="0" step="1" /></div>
+      <div><label>Motivo (opcional)</label><input type="text" id="ajuste-motivo" placeholder="Ej: conteo fisico, merma..." /></div>
+      <div id="ajuste-info-col" style="padding-top:18px;font-size:13px;color:var(--muted)" id="ajuste-stock-actual"></div>
+      <button class="btn btn-primary" id="btn-ajuste" style="margin-top:20px">Ajustar</button>
+    </div>
+    <div id="ajuste-info" style="margin-top:8px"></div>
+  </div>
     <div class="stock-filters">
       <input type="text" id="stock-search" placeholder="Buscar..." style="flex:1;min-width:150px" />
       <select id="stock-rubro-f" style="width:auto;min-width:140px"><option value="">Todos los rubros</option></select>
@@ -860,7 +880,7 @@ function renderMovs(){
       return '<tr><td>'+m.h+'</td>'
         +'<td colspan="2">'+m.n+' <span style="font-size:11px;color:#6B6B65">('+lbl+')</span></td>'
         +'<td colspan="2" style="color:#E24B4A;font-weight:600">-'+fmt(m.m)+'</td>'
-        +'<td><span class="badge badge-out">Egreso</span></td><td></td>'
+        +'<td><span class="badge badge-out">'+(m.pago||'Efectivo')+'</span></td><td></td>'
         +'<td><button class="btn btn-danger btn-sm" data-idx="'+idx+'">x</button></td></tr>';
     }
   }).join('');
@@ -875,10 +895,11 @@ async function addEgreso(){
   var desc=document.getElementById('egreso-desc').value.trim();
   var monto=parseFloat(document.getElementById('egreso-monto').value)||0;
   var tipo=document.getElementById('egreso-tipo').value;
+  var pago=document.getElementById('egreso-pago').value;
   if(!desc||!monto){notify('Completa descripcion y monto','err');return;}
   var dk=todayKey();
   var mov={id:'E'+Date.now(),fecha:dk,h:new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}),
-    ticket:'',t:tipo==='proveedor'?'ep':tipo==='retiro'?'retiro':'eg',bc:'',n:desc,r:'',qty:1,p:0,c:0,g:0,pago:'',obs:'',m:monto};
+    ticket:'',t:tipo==='proveedor'?'ep':tipo==='retiro'?'retiro':'eg',bc:'',n:desc,r:'',qty:1,p:0,c:0,g:0,pago:pago,obs:'',m:monto};
   movs.push(mov);
   await saveMovement(mov);
   renderMovs();notify('Egreso registrado');
@@ -898,6 +919,45 @@ function selectEntProd(p){
     +'<span class="pmeta"> &nbsp;&middot;&nbsp; Stock actual: '+(s?s.q:0)+' uds &nbsp;&middot;&nbsp; Costo: '+fmt(p.c)+'</span></div>';
   eSuggs=[];eFocus=-1;document.getElementById('entrada-qty').focus();
 }
+var ajusteProd = null, ajusteSuggs = [], ajusteFocus = -1;
+
+function selectAjusteProd(p){
+  ajusteProd = p;
+  document.getElementById('ajuste-search').value = p.n;
+  document.getElementById('sugg-ajuste').style.display = 'none';
+  var s = stk[p.bc];
+  var actual = s ? s.q : 0;
+  document.getElementById('ajuste-qty').value = actual;
+  document.getElementById('ajuste-info-col').textContent = 'Stock actual: ' + actual + ' uds';
+  document.getElementById('ajuste-info').innerHTML =
+    '<div class="product-ok" style="padding:8px 12px"><span class="pname" style="font-size:13px">'+p.n+'</span>'
+    +'<span class="pmeta"> &nbsp;&middot;&nbsp; Stock actual: '+actual+' uds &nbsp;&middot;&nbsp; Costo: '+fmt(p.c)+'</span></div>';
+  ajusteSuggs = []; ajusteFocus = -1;
+  document.getElementById('ajuste-qty').focus();
+  document.getElementById('ajuste-qty').select();
+}
+
+async function addAjuste(){
+  if(!ajusteProd){notify('Selecciona un producto primero','err');return;}
+  var nuevaQty = parseInt(document.getElementById('ajuste-qty').value);
+  if(isNaN(nuevaQty)||nuevaQty<0){notify('Ingresa una cantidad valida','err');return;}
+  var motivo = document.getElementById('ajuste-motivo').value.trim();
+  var anterior = stk[ajusteProd.bc] ? stk[ajusteProd.bc].q : 0;
+  if(!stk[ajusteProd.bc]) stk[ajusteProd.bc]={bc:ajusteProd.bc,n:ajusteProd.n,r:ajusteProd.r,q:0,c:ajusteProd.c};
+  stk[ajusteProd.bc].q = nuevaQty;
+  await saveStockItem(stk[ajusteProd.bc]);
+  var diff = nuevaQty - anterior;
+  var diffStr = diff >= 0 ? '+'+diff : ''+diff;
+  notify('Stock ajustado: '+ajusteProd.n+' ('+diffStr+' uds → '+nuevaQty+')');
+  renderStk(); renderStkStats();
+  document.getElementById('ajuste-search').value = '';
+  document.getElementById('ajuste-qty').value = '';
+  document.getElementById('ajuste-motivo').value = '';
+  document.getElementById('ajuste-info').innerHTML = '';
+  document.getElementById('ajuste-info-col').textContent = '';
+  ajusteProd = null;
+}
+
 async function addEntrada(){
   if(!entProd){notify('Selecciona un producto primero','err');return;}
   var qty=parseInt(document.getElementById('entrada-qty').value)||0;
@@ -1152,10 +1212,16 @@ async function addProd(){
   var co=parseFloat(document.getElementById('new-cost').value)||0;
   var ru=document.getElementById('new-rubro').value;
   if(!bc||!nm||!co){notify('Completa codigo, nombre y costo','err');return;}
-  cat[bc]={bc:bc,n:nm,c:co,r:ru};
+  cat[bc]={bc:bc,n:nm,c:co,r:ru,pv:null};
   if(!stk[bc]) stk[bc]={bc:bc,n:nm,r:ru,q:0,c:co};
-  await Promise.all([saveCatalogItem(cat[bc]),saveStockItem(stk[bc])]);
-  renderCat();notify('Producto agregado');
+  var results=await Promise.all([saveCatalogItem(cat[bc]),saveStockItem(stk[bc])]);
+  // verify catalog was saved
+  if(!results[0]||!results[0].ok){
+    // retry once
+    await saveCatalogItem(cat[bc]);
+  }
+  renderCat();renderStkRubroF();
+  notify('Producto agregado al catalogo y stock');
   document.getElementById('new-barcode').value='';
   document.getElementById('new-name').value='';
   document.getElementById('new-cost').value='';
@@ -1635,6 +1701,20 @@ async function init(){
       function(p){selectEntProd(p);},function(){});
   });
   document.getElementById('btn-entrada').addEventListener('click',addEntrada);
+
+  // ajuste stock
+  var aj = document.getElementById('ajuste-search');
+  aj.addEventListener('input',function(){
+    var val=aj.value.trim(); ajusteFocus=-1;
+    ajusteSuggs=getMatches(val);
+    renderSuggBox('sugg-ajuste',ajusteSuggs,function(p){selectAjusteProd(p);},false);
+  });
+  aj.addEventListener('keydown',function(e){
+    navSugg(e,'sugg-ajuste',ajusteSuggs,
+      function(){return ajusteFocus;},function(nf){ajusteFocus=nf;},
+      function(p){selectAjusteProd(p);},function(){});
+  });
+  document.getElementById('btn-ajuste').addEventListener('click',addAjuste);
   document.getElementById('stock-search').addEventListener('input',renderStk);
   document.getElementById('stock-rubro-f').addEventListener('change',renderStk);
   document.getElementById('stock-estado-f').addEventListener('change',renderStk);
@@ -1672,6 +1752,8 @@ async function init(){
       document.getElementById('sugg-ventas').style.display='none';
     if(!e.target.closest('#entrada-search')&&!e.target.closest('#sugg-entrada'))
       document.getElementById('sugg-entrada').style.display='none';
+    if(!e.target.closest('#ajuste-search')&&!e.target.closest('#sugg-ajuste'))
+      document.getElementById('sugg-ajuste').style.display='none';
   });
 
   setTimeout(function(){document.getElementById('barcode-input').focus();},100);
