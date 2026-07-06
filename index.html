@@ -1321,22 +1321,19 @@ function getYesterdayKey(){
 
 function cajaSaldoActual(){
   if(!cajaApertura) return null;
-  var dk = todayKey();
-  var ventasEfectivo = movs.filter(function(m){return m.t==='v' && m.pago==='Efectivo';})
+  var ventasEf = movs.filter(function(m){return m.t==='v' && m.pago==='Efectivo';})
     .reduce(function(s,m){return s+m.p*m.qty;},0);
-  var egresosEfectivo = movs.filter(function(m){return m.t!=='v';})
+  var egresosEf = movs.filter(function(m){return m.t!=='v' && (!m.pago||m.pago==='Efectivo');})
     .reduce(function(s,m){return s+(m.m||0);},0);
-  return cajaApertura.saldo_apertura + ventasEfectivo - egresosEfectivo;
+  return cajaApertura.saldo_apertura + ventasEf - egresosEf;
 }
 
 function renderCaja(){
-  var dk = todayKey();
   var apInfo = document.getElementById('caja-apertura-info');
   var apForm = document.getElementById('caja-apertura-form');
   var cierreCard = document.getElementById('caja-cierre-card');
 
   if(!cajaApertura){
-    // no apertura — show form
     apInfo.innerHTML = '';
     apForm.style.display = 'block';
     document.getElementById('caja-stats').innerHTML = '';
@@ -1354,18 +1351,18 @@ function renderCaja(){
   var saldoActual = cajaSaldoActual();
   var ventasEf = movs.filter(function(m){return m.t==='v'&&m.pago==='Efectivo';})
     .reduce(function(s,m){return s+m.p*m.qty;},0);
-  var egresosEf = movs.filter(function(m){return m.t!=='v';})
+  var egresosEf = movs.filter(function(m){return m.t!=='v'&&(!m.pago||m.pago==='Efectivo');})
     .reduce(function(s,m){return s+(m.m||0);},0);
 
   document.getElementById('caja-stats').innerHTML =
     '<div class="stat"><div class="lbl">Saldo apertura</div><div class="val green">'+fmt(cajaApertura.saldo_apertura)+'</div></div>'
     +'<div class="stat"><div class="lbl">Ventas efectivo</div><div class="val green">'+fmt(ventasEf)+'</div></div>'
-    +'<div class="stat"><div class="lbl">Egresos</div><div class="val red">'+fmt(egresosEf)+'</div></div>'
+    +'<div class="stat"><div class="lbl">Egresos efectivo</div><div class="val red">'+fmt(egresosEf)+'</div></div>'
     +'<div class="stat"><div class="lbl">Saldo actual en caja</div><div class="val terra" style="font-size:26px">'+fmt(saldoActual)+'</div></div>';
 
-  // movimientos efectivo
+  // solo movimientos en efectivo
   var movsEf = movs.filter(function(m){
-    return (m.t==='v' && m.pago==='Efectivo') || m.t!=='v';
+    return (m.t==='v' && m.pago==='Efectivo') || (m.t!=='v' && (!m.pago||m.pago==='Efectivo'));
   });
   var area = document.getElementById('caja-movs-area');
   if(!movsEf.length){
@@ -1398,7 +1395,6 @@ function renderCaja(){
       +'<tbody>'+rows+'</tbody></table></div>';
   }
 
-  // show cierre only if not already closed today
   cierreCard.style.display = cajaApertura.saldo_cierre===null ? 'block' : 'none';
 }
 
@@ -1755,6 +1751,28 @@ async function init(){
     if(!e.target.closest('#ajuste-search')&&!e.target.closest('#sugg-ajuste'))
       document.getElementById('sugg-ajuste').style.display='none';
   });
+
+  // auto-refresh cada 30 segundos
+  setInterval(async function(){
+    var dk = todayKey();
+    try{
+      // reload today's movements
+      var rows = await sbGet('crecer_movements',
+        'select=*&fecha=eq.'+dk+'&order=h.asc');
+      if(Array.isArray(rows)){
+        // only update if there are new movements
+        if(rows.length !== movs.length){
+          movs = rows;
+          renderMovs();
+          updatePill();
+          // refresh caja if open
+          var cajaPanel = document.getElementById('panel-caja');
+          if(cajaPanel && cajaPanel.classList.contains('active')) renderCaja();
+        }
+      }
+      setSyncDot('ok');
+    } catch(e){ setSyncDot('err'); }
+  }, 30000);
 
   setTimeout(function(){document.getElementById('barcode-input').focus();},100);
 }
