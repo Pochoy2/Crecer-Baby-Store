@@ -285,6 +285,17 @@ tr:last-child td{border-bottom:none}
   <!-- stats caja -->
   <div class="stat-grid" id="caja-stats"></div>
 
+  <!-- ajuste de caja -->
+  <div class="card" id="caja-ajuste-card" style="display:none">
+    <div class="card-title">Ajuste de caja</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px">Para corregir diferencias entre el efectivo f&#237;sico y el sistema. Us&#225; un monto positivo si sobra, negativo si falta (ej: -500).</p>
+    <div class="egreso-grid" style="grid-template-columns:1fr 2fr auto">
+      <div><label>Monto ($)</label><input type="number" id="ajcaja-monto" placeholder="Ej: -500 o 1200" step="1" /></div>
+      <div><label>Motivo</label><input type="text" id="ajcaja-motivo" placeholder="Ej: Faltante de vuelto, sobrante en arqueo..." /></div>
+      <button class="btn btn-outline" id="btn-ajcaja">+ Registrar ajuste</button>
+    </div>
+  </div>
+
   <!-- movimientos efectivo -->
   <div class="card">
     <div class="card-title">Movimientos en efectivo del d&#237;a</div>
@@ -875,6 +886,13 @@ function renderMovs(){
         +'<td><span class="badge badge-in">'+m.pago+'</span></td>'
         +'<td style="color:#6B6B65;font-size:12px">'+(m.obs||'')+'</td>'
         +'<td><button class="btn btn-danger btn-sm" data-idx="'+idx+'">x</button></td></tr>';
+    } else if(m.t==='ajcaja'){
+      var esPos=m.p>=0;
+      return '<tr><td>'+m.h+'</td>'
+        +'<td colspan="2">Ajuste de caja <span style="font-size:11px;color:#6B6B65">('+(m.obs||'')+')</span></td>'
+        +'<td colspan="2" style="'+(esPos?'color:#2D6A4F':'color:#E24B4A')+';font-weight:600">'+(esPos?'+':'')+fmt(m.p)+'</td>'
+        +'<td><span class="badge '+(esPos?'badge-in':'badge-out')+'">Efectivo</span></td><td></td>'
+        +'<td><button class="btn btn-danger btn-sm" data-idx="'+idx+'">x</button></td></tr>';
     } else {
       var lbl=m.t==='ep'?'Proveedor':m.t==='retiro'?'Retiro de caja':'Gasto';
       return '<tr><td>'+m.h+'</td>'
@@ -905,6 +923,21 @@ async function addEgreso(){
   renderMovs();notify('Egreso registrado');
   document.getElementById('egreso-desc').value='';
   document.getElementById('egreso-monto').value='';
+}
+async function addAjusteCaja(){
+  var monto=parseFloat(document.getElementById('ajcaja-monto').value);
+  var motivo=document.getElementById('ajcaja-motivo').value.trim();
+  if(!monto||isNaN(monto)){notify('Ingres&#225; un monto distinto de cero','err');return;}
+  if(!motivo){notify('El motivo del ajuste es obligatorio','err');return;}
+  var dk=todayKey();
+  var mov={id:'AJ'+Date.now(),fecha:dk,h:new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}),
+    ticket:'',t:'ajcaja',bc:'',n:'Ajuste de caja',r:'',qty:1,p:monto,c:0,g:0,pago:'Efectivo',obs:motivo,m:Math.abs(monto)};
+  movs.push(mov);
+  await saveMovement(mov);
+  renderMovs();renderCaja();
+  notify('Ajuste de caja registrado: '+(monto>0?'+':'')+fmt(monto));
+  document.getElementById('ajcaja-monto').value='';
+  document.getElementById('ajcaja-motivo').value='';
 }
 
 // ── STOCK ──
@@ -1065,12 +1098,13 @@ function exportStk(){
 // ── RESUMEN ──
 function renderResumen(){
   var vs=movs.filter(function(m){return m.t==='v';});
-  var es=movs.filter(function(m){return m.t!=='v';});
+  var es=movs.filter(function(m){return m.t!=='v' && m.t!=='ajcaja';});
   var ing=vs.reduce(function(s,m){return s+m.p*m.qty;},0);
   var cst=vs.reduce(function(s,m){return s+m.c*m.qty;},0);  // cost field
   // handle both field names (c and cost) due to DB mapping
   var gan=vs.reduce(function(s,m){return s+(m.g||0);},0);
   var egr=es.reduce(function(s,m){return s+(m.m||0);},0);
+  var ajn=movs.filter(function(m){return m.t==='ajcaja';}).reduce(function(s,m){return s+(m.p||0);},0);
   var mp=cst>0?gan/cst:0;
   var tickets={};vs.forEach(function(m){if(m.ticket) tickets[m.ticket]=1;});
   var nT=Object.keys(tickets).length||vs.length;
@@ -1079,8 +1113,9 @@ function renderResumen(){
     +'<div class="stat"><div class="lbl">Ganancia</div><div class="val green">'+fmt(gan)+'</div></div>'
     +'<div class="stat"><div class="lbl">Margen promedio</div><div class="val amber">'+pct(mp)+'</div></div>'
     +'<div class="stat"><div class="lbl">Egresos caja</div><div class="val red">'+fmt(egr)+'</div></div>'
+    +(ajn!==0?'<div class="stat"><div class="lbl">Ajustes de caja</div><div class="val" style="color:'+(ajn>=0?'#2D6A4F':'#E24B4A')+'">'+(ajn>=0?'+':'')+fmt(ajn)+'</div></div>':'')
     +'<div class="stat"><div class="lbl">Items / Tickets</div><div class="val terra">'+vs.length+' / '+nT+'</div></div>'
-    +'<div class="stat"><div class="lbl">Caja neta</div><div class="val">'+fmt(ing-egr)+'</div></div>';
+    +'<div class="stat"><div class="lbl">Caja neta</div><div class="val">'+fmt(ing-egr+ajn)+'</div></div>';
   var bR={};
   vs.forEach(function(m){
     if(!bR[m.r]) bR[m.r]={ing:0,c:0,g:0,q:0};
@@ -1280,7 +1315,8 @@ function exportCSV(){
   var rows=[['Fecha','Hora','Ticket','Tipo','Producto','Rubro','Cantidad','Precio','Costo','Ganancia','FormaPago','Obs']];
   movs.forEach(function(m){
     if(m.t==='v') rows.push([dk,m.h,m.ticket||'','Venta',m.n,m.r,m.qty,m.p,m.c||m.cost,Math.round(m.g),m.pago,m.obs||'']);
-    else rows.push([dk,m.h,'',m.t==='ep'?'Egreso Proveedor':'Egreso Gasto',m.n,'',1,-m.m,0,-m.m,'','']);
+    else if(m.t==='ajcaja') rows.push([dk,m.h,'','Ajuste de caja','Ajuste de caja','',1,m.p,0,m.p,'Efectivo',m.obs||'']);
+    else rows.push([dk,m.h,'',m.t==='ep'?'Egreso Proveedor':m.t==='retiro'?'Retiro de caja':'Egreso Gasto',m.n,'',1,-m.m,0,-m.m,'','']);
   });
   dlCSV(rows,'crecer_'+dk+'.csv');notify('CSV exportado');
 }
@@ -1323,9 +1359,11 @@ function cajaSaldoActual(){
   if(!cajaApertura) return null;
   var ventasEf = movs.filter(function(m){return m.t==='v' && m.pago==='Efectivo';})
     .reduce(function(s,m){return s+m.p*m.qty;},0);
-  var egresosEf = movs.filter(function(m){return m.t!=='v' && (!m.pago||m.pago==='Efectivo');})
+  var egresosEf = movs.filter(function(m){return m.t!=='v' && m.t!=='ajcaja' && (!m.pago||m.pago==='Efectivo');})
     .reduce(function(s,m){return s+(m.m||0);},0);
-  return cajaApertura.saldo_apertura + ventasEf - egresosEf;
+  var ajustesEf = movs.filter(function(m){return m.t==='ajcaja';})
+    .reduce(function(s,m){return s+(m.p||0);},0);
+  return cajaApertura.saldo_apertura + ventasEf - egresosEf + ajustesEf;
 }
 
 function renderCaja(){
@@ -1338,6 +1376,7 @@ function renderCaja(){
     apForm.style.display = 'block';
     document.getElementById('caja-stats').innerHTML = '';
     document.getElementById('caja-movs-area').innerHTML = '<div class="empty">Configur&#225; el saldo inicial para empezar.</div>';
+    document.getElementById('caja-ajuste-card').style.display = 'none';
     cierreCard.style.display = 'none';
     return;
   }
@@ -1351,18 +1390,23 @@ function renderCaja(){
   var saldoActual = cajaSaldoActual();
   var ventasEf = movs.filter(function(m){return m.t==='v'&&m.pago==='Efectivo';})
     .reduce(function(s,m){return s+m.p*m.qty;},0);
-  var egresosEf = movs.filter(function(m){return m.t!=='v'&&(!m.pago||m.pago==='Efectivo');})
+  var egresosEf = movs.filter(function(m){return m.t!=='v'&&m.t!=='ajcaja'&&(!m.pago||m.pago==='Efectivo');})
     .reduce(function(s,m){return s+(m.m||0);},0);
+  var ajustesEf = movs.filter(function(m){return m.t==='ajcaja';})
+    .reduce(function(s,m){return s+(m.p||0);},0);
 
   document.getElementById('caja-stats').innerHTML =
     '<div class="stat"><div class="lbl">Saldo apertura</div><div class="val green">'+fmt(cajaApertura.saldo_apertura)+'</div></div>'
     +'<div class="stat"><div class="lbl">Ventas efectivo</div><div class="val green">'+fmt(ventasEf)+'</div></div>'
     +'<div class="stat"><div class="lbl">Egresos efectivo</div><div class="val red">'+fmt(egresosEf)+'</div></div>'
+    +(ajustesEf!==0?'<div class="stat"><div class="lbl">Ajustes de caja</div><div class="val" style="color:'+(ajustesEf>=0?'#2D6A4F':'#E24B4A')+'">'+(ajustesEf>=0?'+':'')+fmt(ajustesEf)+'</div></div>':'')
     +'<div class="stat"><div class="lbl">Saldo actual en caja</div><div class="val terra" style="font-size:26px">'+fmt(saldoActual)+'</div></div>';
+
+  document.getElementById('caja-ajuste-card').style.display = 'block';
 
   // solo movimientos en efectivo
   var movsEf = movs.filter(function(m){
-    return (m.t==='v' && m.pago==='Efectivo') || (m.t!=='v' && (!m.pago||m.pago==='Efectivo'));
+    return (m.t==='v' && m.pago==='Efectivo') || m.t==='ajcaja' || (m.t!=='v'&&m.t!=='ajcaja' && (!m.pago||m.pago==='Efectivo'));
   });
   var area = document.getElementById('caja-movs-area');
   if(!movsEf.length){
@@ -1370,23 +1414,31 @@ function renderCaja(){
   } else {
     var saldo = cajaApertura.saldo_apertura;
     var rows = movsEf.map(function(m){
-      var monto, tipo, color;
+      var monto, tipo, color, signo;
       if(m.t==='v'){
         monto = m.p*m.qty;
         tipo = 'Venta';
         color = 'color:#2D6A4F';
+        signo = '+';
         saldo += monto;
+      } else if(m.t==='ajcaja'){
+        monto = Math.abs(m.p);
+        tipo = 'Ajuste de caja';
+        color = m.p>=0?'color:#2D6A4F':'color:#E24B4A';
+        signo = m.p>=0?'+':'-';
+        saldo += m.p;
       } else {
         monto = m.m||0;
         tipo = m.t==='ep'?'Proveedor':m.t==='retiro'?'Retiro de caja':'Gasto';
         color = 'color:#E24B4A';
+        signo = '-';
         saldo -= monto;
       }
       return '<tr>'
         +'<td>'+m.h+'</td>'
-        +'<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+m.n+'</td>'
+        +'<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(m.t==='ajcaja'?(m.obs||'Ajuste de caja'):m.n)+'</td>'
         +'<td><span style="font-size:11px;background:var(--green-l);color:var(--green);padding:1px 7px;border-radius:10px">'+tipo+'</span></td>'
-        +'<td style="font-weight:600;'+color+'">'+(m.t==='v'?'+':'-')+fmt(monto)+'</td>'
+        +'<td style="font-weight:600;'+color+'">'+signo+fmt(monto)+'</td>'
         +'<td style="font-weight:700">'+fmt(saldo)+'</td>'
         +'</tr>';
     }).join('');
@@ -1456,11 +1508,12 @@ async function loadResumenPeriodo(){
 function renderResumen(){
   var allMovs = resumenPeriodo==='hoy' ? movs : resumenMovsCache;
   var vs = allMovs.filter(function(m){return m.t==='v';});
-  var es = allMovs.filter(function(m){return m.t!=='v';});
+  var es = allMovs.filter(function(m){return m.t!=='v' && m.t!=='ajcaja';});
   var ing = vs.reduce(function(s,m){return s+m.p*m.qty;},0);
   var cst = vs.reduce(function(s,m){return s+(m.c||m.cost||0)*m.qty;},0);
   var gan = vs.reduce(function(s,m){return s+(m.g||0);},0);
   var egr = es.reduce(function(s,m){return s+(m.m||0);},0);
+  var ajn = allMovs.filter(function(m){return m.t==='ajcaja';}).reduce(function(s,m){return s+(m.p||0);},0);
   var mp = cst>0?gan/cst:0;
   var tickets={};
   vs.forEach(function(m){if(m.ticket) tickets[m.ticket]=1;});
@@ -1471,8 +1524,9 @@ function renderResumen(){
     +'<div class="stat"><div class="lbl">Ganancia</div><div class="val green">'+fmt(gan)+'</div></div>'
     +'<div class="stat"><div class="lbl">Margen promedio</div><div class="val amber">'+pct(mp)+'</div></div>'
     +'<div class="stat"><div class="lbl">Egresos</div><div class="val red">'+fmt(egr)+'</div></div>'
+    +(ajn!==0?'<div class="stat"><div class="lbl">Ajustes de caja</div><div class="val" style="color:'+(ajn>=0?'#2D6A4F':'#E24B4A')+'">'+(ajn>=0?'+':'')+fmt(ajn)+'</div></div>':'')
     +'<div class="stat"><div class="lbl">Items / Tickets</div><div class="val terra">'+vs.length+' / '+nT+'</div></div>'
-    +'<div class="stat"><div class="lbl">Caja neta</div><div class="val">'+fmt(ing-egr)+'</div></div>';
+    +'<div class="stat"><div class="lbl">Caja neta</div><div class="val">'+fmt(ing-egr+ajn)+'</div></div>';
 
   // por rubro
   var bR={};
@@ -1670,6 +1724,7 @@ async function init(){
   document.getElementById('cart-desc').addEventListener('input',updateDescuento);
   document.getElementById('btn-vaciar').addEventListener('click',vaciarCarrito);
   document.getElementById('btn-egreso').addEventListener('click',addEgreso);
+  document.getElementById('btn-ajcaja').addEventListener('click',addAjusteCaja);
   document.getElementById('btn-export-csv').addEventListener('click',exportCSV);
   document.getElementById('btn-clear-day').addEventListener('click',async function(){
     if(!confirm('Borrar todos los movimientos de hoy?')) return;
