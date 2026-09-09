@@ -431,10 +431,18 @@ tr:last-child td{border-bottom:none}
     <div class="card-title">Margenes por rubro</div>
     <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Precio de venta = costo x (1 + margen). Ej: margen 0.30 = 30% sobre costo.</p>
     <table class="rubro-table">
-      <thead><tr><th>Rubro</th><th>Margen</th><th>Multiplicador</th><th>Ej: costo $1000</th></tr></thead>
+      <thead><tr><th>Rubro</th><th>Margen</th><th>Multiplicador</th><th>Ej: costo $1000</th><th></th></tr></thead>
       <tbody id="rubro-tbody"></tbody>
     </table>
     <button class="btn btn-green" style="margin-top:12px" id="btn-save-rubros">Guardar margenes</button>
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+      <div class="card-title" style="margin-bottom:8px">Agregar nuevo rubro</div>
+      <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+        <div style="flex:2;min-width:160px"><label>Nombre del rubro</label><input type="text" id="new-rubro-nombre" placeholder="Ej: Leches de formula" /></div>
+        <div style="flex:1;min-width:100px"><label>Margen</label><input type="number" id="new-rubro-margen" placeholder="0.30" step="0.01" min="0" max="5" /></div>
+        <button class="btn btn-primary" id="btn-add-rubro" style="margin-top:20px">+ Agregar rubro</button>
+      </div>
+    </div>
   </div>
   <div class="card">
     <div class="card-title">Stock minimo para alertas</div>
@@ -491,7 +499,8 @@ var RUBROS={
   'Alimentacion':0.70,'Blanqueria':1.12,'Jugueteria':0.65,
   'Accesorios':0.65,'Linea pesada':0.60,'Diseno':0.60,
   'Ropa interior':0.60,'Oferta Blanqueria':0.70,
-  'Oferta Perfumeria':0.40,'Oferta panales':0.20
+  'Oferta Perfumeria':0.40,'Oferta panales':0.20,
+  'Leches de formula':0.25
 };
 var PROTECTED=['stock','resumen','catalogo','config'];
 var ALL_TABS=['ventas','caja','stock','resumen','catalogo','config'];
@@ -1283,14 +1292,41 @@ function exportCat(){
 // ── CONFIG ──
 function renderRubros(){
   document.getElementById('rubro-tbody').innerHTML=Object.entries(rubros).map(function(e){
-    return '<tr><td>'+e[0]+'</td>'
+    return '<tr><td style="font-weight:500">'+e[0]+'</td>'
       +'<td><input type="number" step="0.01" min="0" max="5" value="'+e[1]+'" data-r="'+e[0]+'" style="width:75px"/></td>'
       +'<td style="color:#6B6B65;font-size:12px">x '+(1+e[1]).toFixed(2)+'</td>'
-      +'<td style="color:#6B6B65;font-size:12px">'+fmt(Math.round(1000*(1+e[1])))+'</td></tr>';
+      +'<td style="color:#6B6B65;font-size:12px">'+fmt(Math.round(1000*(1+e[1])))+'</td>'
+      +'<td><button class="btn btn-danger btn-sm btn-del-rubro" data-r="'+e[0]+'" title="Eliminar rubro">&#10005;</button></td></tr>';
   }).join('');
+  // wire delete buttons
+  document.querySelectorAll('.btn-del-rubro').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var r=btn.dataset.r;
+      // check if any product uses this rubro
+      var inUse=Object.values(cat).some(function(p){return p.r===r;});
+      if(inUse){notify('No se puede eliminar: hay productos con este rubro','err');return;}
+      if(!confirm('Eliminar el rubro "'+r+'"?')) return;
+      delete rubros[r];
+      saveRubrosDB();renderRubros();renderRubroSel();
+      notify('Rubro eliminado');
+    });
+  });
+}
+async function addRubro(){
+  var nombre=document.getElementById('new-rubro-nombre').value.trim();
+  var margen=parseFloat(document.getElementById('new-rubro-margen').value);
+  if(!nombre){notify('Ingresa el nombre del rubro','err');return;}
+  if(isNaN(margen)||margen<0){notify('Ingresa un margen valido','err');return;}
+  if(rubros[nombre]!==undefined){notify('Ese rubro ya existe','err');return;}
+  rubros[nombre]=margen;
+  await saveRubrosDB();
+  renderRubros();renderRubroSel();
+  notify('Rubro "'+nombre+'" agregado');
+  document.getElementById('new-rubro-nombre').value='';
+  document.getElementById('new-rubro-margen').value='';
 }
 async function saveRubros(){
-  document.querySelectorAll('#rubro-tbody input').forEach(function(inp){
+  document.querySelectorAll('#rubro-tbody input[data-r]').forEach(function(inp){
     rubros[inp.dataset.r]=parseFloat(inp.value)||0;
   });
   await saveRubrosDB();renderRubros();notify('Margenes guardados');
@@ -1782,6 +1818,7 @@ async function init(){
   });
   document.getElementById('btn-export-cat').addEventListener('click',exportCat);
   document.getElementById('btn-save-rubros').addEventListener('click',saveRubros);
+  document.getElementById('btn-add-rubro').addEventListener('click',addRubro);
   document.getElementById('btn-save-config').addEventListener('click',async function(){
     cfg.min=parseInt(document.getElementById('stock-min').value)||3;
     await saveCfgDB();renderStk();renderStkStats();notify('Configuracion guardada');
